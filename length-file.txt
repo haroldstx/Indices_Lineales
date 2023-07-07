@@ -1,0 +1,21 @@
+Row ID        4  INT
+Order ID      14 CHAR
+Order Date    10 DATE
+Ship Date     10 DATE
+Ship Mode     14 CHAR
+Customer ID   8  CHAR
+Customer Name 20 CHAR
+Segment       11 CHAR
+Country       13 CHAR
+City          20 CHAR
+State         20 CHAR
+Postal Code   5  INT
+Region        7  CHAR
+Product ID    15 CHAR
+Category      15 CHAR
+Sub-Category  11 CHAR
+Product Name  120CHAR
+Sales         10 NUMBER(7.2)
+Quantity      3  INT
+Discount      4  NUMBER(4.2)
+Profit        10 NUMBER(7.2)

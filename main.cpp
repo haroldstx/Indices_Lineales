@@ -1,836 +1,669 @@
-#pragma once
+#include "Indexacion.cpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <string>
 #include <vector>
-#include <algorithm>
-#include <cstring>
+#include <iomanip>
+using std::cerr;
+using std::cout;
+using std::endl;
+using std::string;
+using std::ifstream;
+using std::ofstream;
+using std::stringstream;
+using std::vector;
+using std::to_string;
+using std::setw;
 
-using namespace std;
-
-struct Field {
-    string name;
-    int length;
-};
-
-struct Orders {
-    char orderId[15];
-    char orderDate[11];
-    char shipDate[11];
-    char shipMode[15];
-    char customerId[9];
-};
-
-struct orderIndexEntry {
-    char orderId[15];
-    long offset;
-};
-
-struct Customers {
-    char customerId[9];
-    char customerName[21];
-    char segment[12];
-    char country[14];
-    char city[21];
-    char state[21];
-    int postalCode;
-    char region[8];
-};
-
-struct customersIndexRecord {
-    char customerId[9];
-    int offset;
-};
-
-struct Products {
-    char productId[16];
-    char category[16];
-    char subcategory[12];
-    char productName[121];
-};
-
-struct productsIndexEntry {
-    char key[16];
-    streampos offset;
-};
-
-struct Details {
-    char orderId[15];
-    char productId[16];
-    double sales;
-    int quantity;
-    double discount;
-    double profit;
-
-};
-
-bool compareIndexRecords(const customersIndexRecord& record1, const customersIndexRecord& record2) {
-    return strcmp(record1.customerId, record2.customerId) < 0;
-}
-bool compareIndexEntries(const orderIndexEntry& entry1, const orderIndexEntry& entry2) {
-    return strcmp(entry1.orderId, entry2.orderId) < 0;
-}
-bool compareProductsIndexEntries(const productsIndexEntry& entry1, const productsIndexEntry& entry2) {
-    return strcmp(entry1.key, entry2.key) < 0;
-}
-
-vector<Field> readFieldsFromCSV(const string& csvFile, const string& lengthFile) {
-    vector<Field> fields;
-    ifstream length(lengthFile);
-    if (length.is_open()) {
-        string line;
-        while (getline(length, line)) {
-            string fieldName = line.substr(0, 14);
-            string lengthStr = line.substr(14, line.find_last_of(' ') - 14);
-            int fieldLength = stoi(lengthStr);
-            fields.push_back({ fieldName, fieldLength });
-        }
-        length.close();
-    }
-    return fields;
-}
-
-
-vector<string> splitLine(const string& line, char delimiter) {
-    vector<string> tokens;
-    stringstream ss(line);
-    string token;
+string handleQuotes(stringstream& ss) {
+    string field;
     bool inQuotes = false;
-    bool doubleQuotes = false;
-    string tokenBuffer;
-    int fieldCount = 0;
-
-    while (getline(ss, token, delimiter)) {
-        if (!inQuotes) {
-            if (token.empty()) {
-                tokenBuffer += token;
-                tokenBuffer += delimiter;
-            }
-            else if (token.front() == '"') {
-                tokenBuffer += token;
-                tokenBuffer += delimiter;
-                if (token.back() != '"') {
-                    inQuotes = true;
-                    doubleQuotes = false;
-                }
-                else {
-                    tokenBuffer = tokenBuffer.substr(1, tokenBuffer.length() - 3);
-                    if (fieldCount >= 15 && fieldCount <= 18) {
-                        size_t quotePos = tokenBuffer.find("\"\"");
-                        if (quotePos != string::npos) {
-                            tokenBuffer = tokenBuffer.substr(1, quotePos - 1) + tokenBuffer.substr(quotePos + 2);
-                        }
-                        tokenBuffer.erase(remove_if(tokenBuffer.begin(), tokenBuffer.end(), [](char c) { return !isdigit(c); }), tokenBuffer.end());
-                    }
-                    tokens.push_back(tokenBuffer);
-                    tokenBuffer.clear();
-                }
-            }
-            else {
-                tokens.push_back(token);
-            }
-        }
-        else {
-            tokenBuffer += token;
-            tokenBuffer += delimiter;
-            if (doubleQuotes) {
-                tokenBuffer = tokenBuffer.substr(1, tokenBuffer.length() - 3);
-                tokens.push_back(tokenBuffer);
-                tokenBuffer.clear();
+    string quotedField;
+    while (getline(ss, field, ',')) {
+        field = field.substr(field.find_first_not_of(' '));
+        field = field.substr(0, field.find_last_not_of(' ') + 1);
+        if (!inQuotes && !field.empty() && field.front() == '"') {
+            inQuotes = true;
+            if (field.length() > 1 && field[field.length() - 2] == '"') {
+                quotedField = field.substr(1, field.length() - 3);
                 inQuotes = false;
-                doubleQuotes = false;
+            } else {
+                quotedField = field.substr(1);
             }
-            else if (token.back() == '"') {
-                size_t quotePos = token.find("\"\"");
-                if (quotePos != string::npos) {
-                    tokenBuffer = tokenBuffer.substr(0, tokenBuffer.length() - 2);
-                    tokenBuffer += token.substr(1, quotePos - 1);
-                    doubleQuotes = true;
-                }
-                else {
-                    tokenBuffer = tokenBuffer.substr(0, tokenBuffer.length() - 2);
-                    if (fieldCount >= 15 && fieldCount <= 18) {
-                        tokenBuffer.erase(remove_if(tokenBuffer.begin(), tokenBuffer.end(), [](char c) { return !isdigit(c); }), tokenBuffer.end());
-                    }
-                    tokens.push_back(tokenBuffer);
-                    tokenBuffer.clear();
-                    inQuotes = false;
-                }
+        } else if (inQuotes) {
+            quotedField += "," + field;
+            if (field.back() == '"' && !field.empty() && field[field.length() - 2] != '"') {
+                inQuotes = false;
+                return quotedField.substr(0, quotedField.length() - 1);
+            }
+        } else {
+            return field;
+        }
+    }
+    if (inQuotes) {
+        string remainingData;
+        stringstream ss2(quotedField);
+        while (getline(ss2, remainingData, ',')) {
+            // Hacer algo con cada elemento de remainingData
+        }
+        quotedField = quotedField + '/';
+        return quotedField;
+    }
+    return field;
+}
+
+int getNumberOfRecords(string fileName) {
+    int counter = 0;
+    ifstream inputFile(fileName, std::ios::binary);
+    string line;
+    while (getline(inputFile, line, '\n')) {
+        counter++;
+    }
+    inputFile.close();
+    return counter;
+}
+
+int getRecordLength(string fileName) {
+    int numberOfRecords = getNumberOfRecords(fileName);
+    int recordLength = 0;
+    ifstream inputFile(fileName, std::ios::binary);
+    inputFile.seekg(0, std::ios::end);
+    int fileSize = inputFile.tellg();
+    inputFile.seekg(0, std::ios::beg);
+    recordLength = fileSize / numberOfRecords;
+    inputFile.close();
+    return recordLength;
+}
+
+int getFieldSize(string lengthFileName, int position) {
+    ifstream inputFile(lengthFileName, std::ios::binary);
+    string line, field;
+    string dataName, dataType, dataLength;
+    //int dataLength;
+    for (int i = 0; i < 21; i++) {
+        getline(inputFile, line, '\n');
+        stringstream lineSS(line);
+        if (i == position) {
+            string data1, data2, data3, data4;
+            string result;
+            lineSS >> data1 >> data2 >> data3;
+            dataName = data1;
+            dataLength = data2;
+            dataType = data3;
+            if (lineSS >> data4) {
+                dataLength = data3;
+            }
+             else {
+                dataLength = data2;
+            }
+            if (dataType.front() == '1') {
+                data3 = dataType.substr(0, dataType.length() - 4);
+                dataLength = data3;
             }
         }
-
-        ++fieldCount;
     }
-
-    if (!tokenBuffer.empty()) {
-        tokens.push_back(tokenBuffer);
-    }
-
-    return tokens;
+    return stoi(dataLength);
 }
 
-
-string padField(const string& field, int length) {
-    string paddedField = field;
-    if (paddedField.length() > static_cast<size_t>(length)) {
-        paddedField = paddedField.substr(0, length);
-    }
-    else if (paddedField.length() < static_cast<size_t>(length)) {
-        paddedField.resize(length, ' ');
-    }
-    return paddedField;
-}
-
-
-void createCustomersFile(string inputFile) {
-    vector<Field> fields = readFieldsFromCSV(inputFile, "length-file.txt");
-    vector<string> allRecords;
-    ifstream inFile(inputFile);
-    ofstream outFile("customers.dat", ios::binary | ios::out);
-
-    if (inFile.is_open() && outFile.is_open()) {
-        string line;
-        getline(inFile, line);
-        while (getline(inFile, line)) {
-            vector<string> tokens = splitLine(line, ',');
-            string record;
-            for (size_t i = 0; i < fields.size(); ++i) {
-                if (i == 5 || i == 6 || i == 7 || i == 8 || i == 9 || i == 10 || i == 11 || i == 12) {
-                    string paddedField = padField(tokens[i], fields[i].length);
-                    record += paddedField;
-                }
-            }
-            allRecords.push_back(record);
-            bool exists = false;
-            int recordSize = allRecords.size() - 1;
-            for (int i = 0; i < recordSize; i++) {
-                if (allRecords[i] == record) {
-                    exists = true;
-                    break;
-                }
-            }
-            if (!exists) {
-                Customers customer;
-                for (size_t i = 0; i < fields.size(); ++i) {
-                    string paddedField = padField(tokens[i], fields[i].length);
-                    if (i == 5) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(customer.customerId, paddedField.c_str(), 8);
-                        customer.customerId[8] = '\0';
-                    }
-                    else if (i == 6) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(customer.customerName, paddedField.c_str(), 20);
-                        customer.customerName[20] = '\0';
-                    }
-                    else if (i == 7) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(customer.segment, paddedField.c_str(), 12);
-                        customer.segment[12] = '\0';
-                    }
-                    else if (i == 8) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(customer.country, paddedField.c_str(), 13);
-                        customer.country[13] = '\0';
-                    }
-                    else if (i == 9) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(customer.city, paddedField.c_str(), 20);
-                        customer.city[20] = '\0';
-                    }
-                    else if (i == 10) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(customer.state, paddedField.c_str(), 20);
-                        customer.state[20] = '\0';
-                    }
-                    else if (i == 11) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        customer.postalCode = stoi(paddedField);
-                    }
-                    else if (i == 12) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(customer.region, paddedField.c_str(), 7);
-                        customer.region[7] = '\0';
-                        outFile.write(reinterpret_cast<char*>(&customer), sizeof(Customers));
-                    }
-                }
-
+void writeNormalized(string field, int fieldLength, int section, bool writeLineBreak) {
+    switch (section) {
+        case 0: {
+            ofstream fileOutput("orders.dat", std::ios::app | std::ios::out | std::ios::binary);
+            fileOutput.write(field.c_str(), fieldLength);
+            fileOutput.write(" ", 1);
+            if (writeLineBreak == true) {
+                fileOutput.write("\n", 1);
+                fileOutput.close();
             }
         }
-        inFile.close();
-        outFile.close();
-    }
-    else {
-        cout << "Error opening files." << endl;
-    }
-}
-void createOrdersFile(string inputFile) {
-    vector<Field> fields = readFieldsFromCSV(inputFile, "length-file.txt");
-    vector<string> allRecords;
-    ifstream inFile(inputFile);
-    ofstream outFile("orders.dat", ios::binary | ios::out);
-
-    if (inFile.is_open() && outFile.is_open()) {
-        string line;
-        getline(inFile, line);
-
-        while (getline(inFile, line)) {
-            vector<string> tokens = splitLine(line, ',');
-            string record;
-            for (size_t i = 0; i < fields.size(); ++i) {
-                if (i == 1 || i == 2 || i == 3 || i == 4 || i == 5) {
-                    string paddedField = padField(tokens[i], fields[i].length);
-                    record += paddedField;
-                }
-            }
-            allRecords.push_back(record);
-            bool exists = false;
-            int recordSize = allRecords.size() - 1;
-            for (int i = 0; i < recordSize; i++) {
-                if (allRecords[i] == record) {
-                    exists = true;
-                    break;
-                }
-            }
-            if (!exists) {
-                Orders order;
-                for (size_t i = 0; i < fields.size(); ++i) {
-                    string paddedField = padField(tokens[i], fields[i].length);
-                    if (i == 1) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(order.orderId, paddedField.c_str(), 14);
-                        order.orderId[14] = '\0';
-                    }
-                    else if (i == 2) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(order.orderDate, paddedField.c_str(), 10);
-                        order.orderDate[10] = '\0';
-                    }
-                    else if (i == 3) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(order.shipDate, paddedField.c_str(), 10);
-                        order.shipDate[10] = '\0';
-                    }
-                    else if (i == 4) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(order.shipMode, paddedField.c_str(), 14);
-                        order.shipMode[14] = '\0';
-                    }
-                    else if (i == 5) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(order.customerId, paddedField.c_str(), 8);
-                        order.customerId[8] = '\0';
-                        outFile.write(reinterpret_cast<char*>(&order), sizeof(Orders));
-
-                    }
-                }
-
+        break;
+        case 1: {
+            ofstream fileOutput("details.dat", std::ios::app | std::ios::out | std::ios::binary);
+            fileOutput.write(field.c_str(), fieldLength);
+            fileOutput.write(" ", 1);
+            if (writeLineBreak == true) {
+                fileOutput.write("\n", 1);
+                fileOutput.close();
             }
         }
-        inFile.close();
-        outFile.close();
-    }
-    else {
-        cout << "Error opening files." << endl;
+        break;
+        case 2: {
+            ofstream fileOutput("customers.dat", std::ios::app | std::ios::out | std::ios::binary);
+            fileOutput.write(field.c_str(), fieldLength);
+            fileOutput.write(" ", 1);
+            if (writeLineBreak == true) {
+                fileOutput.write("\n", 1);
+                fileOutput.close();
+            }
+        }
+        break;
+        case 3: {
+            ofstream fileOutput("products.dat", std::ios::app | std::ios::out | std::ios::binary);
+            fileOutput.write(field.c_str(), fieldLength);
+            fileOutput.write(" ", 1);
+            if (writeLineBreak == true) {
+                fileOutput.write("\n", 1);
+                fileOutput.close();
+            }
+        }
+        break;
     }
 }
-void createDetailsFile(string inputFile) {
-    vector<Field> fields = readFieldsFromCSV(inputFile, "length-file.txt");
-    vector<string> allRecords;
-    ifstream inFile(inputFile);
-    ofstream outFile("details.dat", ios::binary | ios::out);
-    if (inFile.is_open() && outFile.is_open()) {
-        string line;
-        getline(inFile, line);
-        while (getline(inFile, line)) {
-            vector<string> tokens = splitLine(line, ',');
-            string record;
-            for (size_t i = 0; i < fields.size(); ++i) {
-                if (i == 1 || i == 13 || i == 17 || i == 18 || i == 19 || i == 20) {
-                    string paddedField = padField(tokens[i], fields[i].length);
-                    record += paddedField;
-                }
-            }
-            allRecords.push_back(record);
-            bool exists = false;
-            int recordSize = allRecords.size() - 1;
-            for (int i = 0; i < recordSize; i++) {
-                if (allRecords[i] == record) {
-                    exists = true;
-                    break;
-                }
-            }
-            if (!exists) {
-                Details details;
 
-                for (size_t i = 0; i < fields.size(); ++i) {
-                    string paddedField = padField(tokens[i], fields[i].length);
-                    if (i == 1) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(details.orderId, paddedField.c_str(), 14);
-                        details.orderId[14] = '\0';
-                    }
-                    else if (i == 13) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(details.productId, paddedField.c_str(), 15);
-                        details.productId[15] = '\0';
-                    }
-                    else if (i == 17) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        try {
-                            details.sales = stod(paddedField);
+void formatField(std::string& field, int length) {
+    field.resize(length, ' ');
+}
+
+void writeIndexFile (int recordLength, string fileName, int fileType, int numberOfRecords) {
+    int offset = 0;
+    ifstream fileInput(fileName, std::ios::binary);
+    if (!fileInput) {
+        std::cout << "No se pudo abrir el archivo." << std::endl;
+        return;
+    }
+    switch (fileType) {
+        case 0: {
+            ofstream fileOutput("customers.idx");
+            string line, id;
+            for (int i = 0; i < numberOfRecords; i++) {
+                int offset = recordLength * i;
+                string offsesStr = to_string(offset);
+                getline(fileInput, line, '\n');
+                id = line.substr(0, 8);
+                cout << id << " " << offset << endl;
+                fileOutput.write(id.c_str(), 8);
+                fileOutput.write(" ",1);
+                fileOutput.write(offsesStr.c_str(), offsesStr.length());
+                fileOutput.write("\n",1);
+            }
+            break;
+        }
+        case 1: {
+            ofstream fileOutput("orders.idx");
+            string line, id;
+            for (int i = 0; i < numberOfRecords; i++) {
+                int offset = recordLength * i;
+                string offsesStr = to_string(offset);
+                getline(fileInput, line, '\n');
+                id = line.substr(0, 14);
+                cout << id << " " << offset << endl;
+                fileOutput.write(id.c_str(), 14);
+                fileOutput.write(" ",1);
+                fileOutput.write(offsesStr.c_str(), offsesStr.length());
+                fileOutput.write("\n",1);
+            }
+            break;
+        }
+        case 2: {
+            ofstream fileOutput("products.idx");
+            string line, id;
+            for (int i = 0; i < numberOfRecords; i++) {
+                int offset = recordLength * i;
+                string offsesStr = to_string(offset);
+                getline(fileInput, line, '\n');
+                id = line.substr(0, 15);
+                cout << id << " " << offset << endl;
+                fileOutput.write(id.c_str(), 15);
+                fileOutput.write(" ",1);
+                fileOutput.write(offsesStr.c_str(), offsesStr.length());
+                fileOutput.write("\n",1);
+            }
+            break;
+        }
+    }
+}
+
+double getData (int fileType, int offset, bool visited, int index) {
+    double total;
+    string line;
+    switch(fileType) {
+        case 0: {
+            ifstream inputFile("orders.dat");
+            inputFile.seekg(offset);
+            string id(14, '\0');
+            inputFile.read(&id[0], 14);
+            offset = offset + 15;
+            inputFile.seekg(offset);
+            string date(10, '\0');
+            inputFile.read(&date[0], 10);
+            offset = offset + 11;
+            inputFile.seekg(offset);
+            string shipped(10, '\0');
+            inputFile.read(&shipped[0], 10);
+            offset = offset + 11;
+            inputFile.seekg(offset);
+            string shipMode(14, '\0');
+            inputFile.read(&shipMode[0], 14);
+            cout << "ORDER" << endl;
+            cout << "    " << "ID:        " << id << endl;
+            cout << "    " << "Date:      " << date << endl;
+            cout << "    " << "Shipped:   " << shipped << endl;
+            cout << "    " << "Ship Mode: " << shipMode << endl;
+            cout << endl;
+            break;
+        }
+        case 1: {
+            ifstream inputFile("customers.dat");
+            inputFile.seekg(offset);
+            string id(8, '\0');
+            inputFile.read(&id[0], 8);
+            offset = offset + 9;
+
+            inputFile.seekg(offset);
+            string name(20, '\0');
+            inputFile.read(&name[0], 20);
+            offset = offset + 21;
+
+            inputFile.seekg(offset);
+            string segment(11, '\0');
+            inputFile.read(&segment[0], 11);
+            offset = offset + 12;
+
+            inputFile.seekg(offset);
+            string country(13, '\0');
+            inputFile.read(&country[0], 13);
+            offset = offset + 14;
+
+            inputFile.seekg(offset);
+            string city(20, '\0');
+            inputFile.read(&city[0], 20);
+            offset = offset + 21;
+
+            inputFile.seekg(offset);
+            string state(20, '\0');
+            inputFile.read(&state[0], 20);
+            offset = offset + 21;
+
+            inputFile.seekg(offset);
+            string postal(5, '\0');
+            inputFile.read(&postal[0], 5);
+            offset = offset + 6;
+
+            inputFile.seekg(offset);
+            string region(7, '\0');
+            inputFile.read(&region[0], 7);
+            cout << "CUSTOMER" << endl;
+            cout << "    " << "ID:          " << id << endl;
+            cout << "    " << "Name:        " << name << endl;
+            cout << "    " << "Segment:     " << segment << endl;
+            cout << "    " << "Country:     " << country << endl;
+            cout << "    " << "City:        " << city << endl;
+            cout << "    " << "State:       " << state << endl;
+            cout << "    " << "Postal Code: " << postal << endl;
+            cout << "    " << "Region:      " << region << endl;
+            cout << endl;
+            break;
+        }
+        case 2: {
+            int offsetDetails = 63 * (index + 1) + 31;
+            ifstream inputFile("products.dat");
+            ifstream inputDetails("details.dat");
+            inputFile.seekg(offset);
+            string id(15, '\0');
+            inputFile.read(&id[0], 15);
+            offset = offset + 16;
+
+            inputFile.seekg(offset);
+            string category(15, '\0');
+            inputFile.read(&category[0], 15);
+            offset = offset + 16;
+
+            inputFile.seekg(offset);
+            string subCategory(11, '\0');
+            inputFile.read(&subCategory[0], 11);
+            offset = offset + 12;
+
+            inputFile.seekg(offset);
+            string productName(120, '\0');
+            inputFile.read(&productName[0], 120);
+
+            inputDetails.seekg(offsetDetails);
+            string sales(10, '\0');
+            inputDetails.read(&sales[0], 10);
+            offsetDetails = offsetDetails + 11;
+
+            inputDetails.seekg(offsetDetails);
+            string quantity(3, '\0');
+            inputDetails.read(&quantity[0], 3);
+            offsetDetails = offsetDetails + 4;
+
+            inputDetails.seekg(offsetDetails);
+            string discount(4, '\0');
+            inputDetails.read(&discount[0], 4);
+            offsetDetails = offsetDetails + 5;
+
+            inputDetails.seekg(offsetDetails);
+            string profit(10, '\0');
+            inputDetails.read(&profit[0], 10);
+
+            formatField(id, 16);
+            formatField(category, 16);
+            formatField(subCategory, 12);
+            formatField(productName, 121);
+            formatField(sales, 10);
+            formatField(quantity, 3);
+            formatField(discount, 4);
+            formatField(profit, 10);
+            if (visited == false) {
+                cout << "ITEMS" << endl;
+            }
+            cout << "    " << id << category << subCategory << productName << sales << quantity << discount << profit << endl;
+            total = stoi(quantity) * stod(sales);
+            break;
+        }
+        case 3: {
+            ifstream inputFile("products.dat");
+            inputFile.seekg(offset);
+            string id(15, '\0');
+            inputFile.read(&id[0], 15);
+            offset = offset + 16;
+
+            inputFile.seekg(offset);
+            string category(15, '\0');
+            inputFile.read(&category[0], 15);
+            offset = offset + 16;
+
+            inputFile.seekg(offset);
+            string subCategory(11, '\0');
+            inputFile.read(&subCategory[0], 11);
+            offset = offset + 12;
+
+            inputFile.seekg(offset);
+            string productName(120, '\0');
+            inputFile.read(&productName[0], 120);
+            formatField(id, 16);
+            formatField(category, 16);
+            formatField(subCategory, 12);
+            formatField(productName, 121);
+            cout << "Product" << endl;
+            cout << "    " << "ID:           " << id << endl;
+            cout << "    " << "Category:     " << category << endl;
+            cout << "    " << "Sub-category: " << subCategory << endl;
+            cout << "    " << "Name:         " << productName << endl;
+            cout << endl;
+            break;
+        }
+    }
+    return total;
+}
+
+vector<Index*> getIndexList(int archivo) {
+    vector<Index*> indexList;
+    int index = 1;
+    bool isFirstLine = true;
+    string line, id, offset;
+    switch (archivo) {
+        case 0: {
+            ifstream fileInput("orders.idx");
+            while (getline(fileInput, line, '\n')) {
+                if (isFirstLine == true) {
+                    isFirstLine =false;
+                    continue;
+                }
+                stringstream ss(line);
+                ss >> id >> offset;
+                indexList.push_back(new Index(index, id, stoi(offset)));
+            }
+            break;
+        }
+        case 1: {
+            ifstream fileInput("customers.idx");
+            while (getline(fileInput, line, '\n')) {
+                if (isFirstLine == true) {
+                    isFirstLine =false;
+                    continue;
+                }
+                stringstream ss(line);
+                ss >> id >> offset;
+                indexList.push_back(new Index(index, id, stoi(offset)));
+            }
+            break;
+        }
+        case 2: {
+            ifstream fileInput("products.idx");
+            while (getline(fileInput, line, '\n')) {
+                if (isFirstLine == true) {
+                    isFirstLine =false;
+                    continue;
+                }
+                stringstream ss(line);
+                ss >> id >> offset;
+                indexList.push_back(new Index(index, id, stoi(offset)));
+            }
+            break;
+        }
+    }
+    return indexList;  
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
+        cerr << "Error: Debe ingresar el nombre del archivo y la bandera de la accion que desea realizar." << endl;
+    }
+    string fileName = argv[1];
+    string flag = argv[2];
+    if (flag == "-normalize") {
+        ifstream fileInput(fileName, std::ios::in | std::ios::binary);
+        if (fileInput.fail()) {
+            cerr << "Error: No se pudo abrir el archivo." << endl;
+            return 0;
+        }
+        //-----------------------------------
+        int numberOfRecords = getNumberOfRecords(fileName);
+        //Normalize the file
+        for (int i = 0; i < numberOfRecords; i++) {
+            bool isInput = false;
+            string line;
+            getline(fileInput, line, '\n');
+            stringstream ss(line);
+            for (int i = 0; i < 21; i++) {
+                string field = handleQuotes(ss);
+                int fieldLength = getFieldSize("length-file.txt", i);
+                if (field.back() == '/') {
+                    isInput = true;
+                    int isLast = 0;
+                    vector<string> quoteData;
+                    string remainingData = field;
+                    remainingData = remainingData.substr(0, remainingData.length() - 1);
+                    string nextData;
+                    stringstream ssQuotedField(remainingData);
+                    while(getline(ssQuotedField, field, ',')) {
+                        if (field.back() != '"') {
+                            quoteData.push_back(field);
+                            field = "";
+                        } else if (field.back() == '"') {
+                            quoteData.push_back(field);
+                            field = "";
+                        } else if (field.back() == ' '){
+                            field = field;
+                            i++;
                         }
-                        catch (const invalid_argument& e) {
+                    }
+                    for (size_t i = 0; i < quoteData.size() - 4; i++) {
+                        field = field + quoteData[i] + ",";
+                    }
+                    field = field.substr(0, field.length() - 2);
+                    formatField(field, fieldLength);
+                    writeNormalized(field, fieldLength, 3, true);
+                    //Remaining data
+                    field = "";
+                    for (size_t i = quoteData.size() - 4; i < quoteData.size(); i++) {
+                        field = field + quoteData[i] + ",";
+                    }
+                    field = field.substr(0, field.length() - 1);
+                    stringstream remainingSS(field);
+                    while(getline(remainingSS, nextData, ',')) {
+                        fieldLength = getFieldSize("length-file.txt", i + 1);
+                        formatField(nextData, fieldLength);
+                        if (isLast == 3) {
+                            writeNormalized(nextData, fieldLength, 1, true);
+                        } else {
+                            writeNormalized(nextData, fieldLength, 1, false);
                         }
-
+                        i++;
+                        isLast++;
                     }
-                    else if (i == 18) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        details.quantity = stoi(paddedField);
-                    }
-                    else if (i == 19) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        details.discount = stod(paddedField);
-                    }
-                    else if (i == 20) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        details.profit = stod(paddedField);
-                        outFile.write(reinterpret_cast<char*>(&details), sizeof(Details));
-                    }
-
-                }
-
-            }
-        }
-        inFile.close();
-        outFile.close();
-    }
-    else {
-        cout << "Error opening files." << endl;
-    }
-}
-void createProductsFile(string inputFile) {
-    vector<Field> fields = readFieldsFromCSV(inputFile, "length-file.txt");
-    vector<string> allRecords;
-    ifstream inFile(inputFile);
-    ofstream outFile("products.dat", ios::binary | ios::out);
-
-    if (inFile.is_open() && outFile.is_open()) {
-        string line;
-        getline(inFile, line);
-        while (getline(inFile, line)) {
-            vector<string> tokens = splitLine(line, ',');
-            string record;
-            for (size_t i = 0; i < fields.size(); ++i) {
-                if (i == 13 || i == 14 || i == 15 || i == 16) {
-                    string paddedField = padField(tokens[i], fields[i].length);
-                    record += paddedField;
-                }
-            }
-            allRecords.push_back(record);
-            bool exists = false;
-            int recordSize = allRecords.size() - 1;
-            for (int i = 0; i < recordSize; i++) {
-                if (allRecords[i] == record) {
-                    exists = true;
-                    break;
-                }
-            }
-            if (!exists) {
-                Products product;
-                for (size_t i = 0; i < fields.size(); ++i) {
-                    string paddedField = padField(tokens[i], fields[i].length);
-                    if (i == 13) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(product.productId, paddedField.c_str(), 15);
-                        product.productId[15] = '\0';
-                    }
-                    else if (i == 14) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(product.category, paddedField.c_str(), 15);
-                        product.category[15] = '\0';
-                    }
-                    else if (i == 15) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(product.subcategory, paddedField.c_str(), 11);
-                        product.subcategory[11] = '\0';
-                    }
-                    else if (i == 16) {
-                        string paddedField = padField(tokens[i], fields[i].length);
-                        strncpy(product.productName, paddedField.c_str(), 120);
-                        product.productName[120] = '\0';
-                        outFile.write(reinterpret_cast<char*>(&product), sizeof(Products));
+                } else {
+                    if (isInput == false) {
+                        formatField(field, fieldLength);
+                        switch (i) {
+                            case 1: 
+                            writeNormalized(field, fieldLength, 0, false);
+                            writeNormalized(field, fieldLength, 1, false);
+                            break;
+                            case 2:
+                            writeNormalized(field, fieldLength, 0, false);
+                            break;
+                            case 3:
+                            writeNormalized(field, fieldLength, 0, false);
+                            break;
+                            case 4:
+                            writeNormalized(field, fieldLength, 0, false);
+                            break;
+                            case 5:
+                            writeNormalized(field, fieldLength, 0, true);
+                            writeNormalized(field, fieldLength, 2, false);
+                            break;
+                            case 6:
+                            writeNormalized(field, fieldLength, 2, false);
+                            break;
+                            case 7:
+                            writeNormalized(field, fieldLength, 2, false);
+                            break;
+                            case 8:
+                            writeNormalized(field, fieldLength, 2, false);
+                            break;
+                            case 9:
+                            writeNormalized(field, fieldLength, 2, false);
+                            break;
+                            case 10:
+                            writeNormalized(field, fieldLength, 2, false);
+                            break;
+                            case 11:
+                            writeNormalized(field, fieldLength, 2, false);
+                            break;
+                            case 12:
+                            writeNormalized(field, fieldLength, 2, true);
+                            break;
+                            case 13:
+                            writeNormalized(field, fieldLength, 1, false);
+                            writeNormalized(field, fieldLength, 3, false);
+                            break;
+                            case 14:
+                            writeNormalized(field, fieldLength, 3, false);
+                            break;
+                            case 15:
+                            writeNormalized(field, fieldLength, 3, false);
+                            break;
+                            case 16:
+                            writeNormalized(field, fieldLength, 3, true);
+                            break;
+                            case 17:
+                            writeNormalized(field, fieldLength, 1, false);
+                            break;
+                            case 18:
+                            writeNormalized(field, fieldLength, 1, false);
+                            break;
+                            case 19:
+                            writeNormalized(field, fieldLength, 1, false);
+                            break;
+                            case 20:
+                            writeNormalized(field, fieldLength, 1, true);
+                            break;
+                        }
                     }
                 }
-
-            }
-        }
-        inFile.close();
-        outFile.close();
-    }
-    else {
-        cout << "Error opening files." << endl;
-    }
-}
-
-void createCustomersIndex() {
-    ifstream inFile("customers.dat", ios::binary);
-    ofstream outFile("customers.idx", ios::binary);
-
-    if (!inFile) {
-        cerr << "Error al abrir el archivo de entrada " << endl;
-        return;
-    }
-
-    if (!outFile) {
-        cerr << "Error al abrir el archivo de salida" << endl;
-        return;
-    }
-
-    Customers customer;
-    customersIndexRecord indexRecord;
-    vector<customersIndexRecord> indexRecords;
-
-    while (inFile.read(reinterpret_cast<char*>(&customer), sizeof(Customers))) {
-        strcpy(indexRecord.customerId, customer.customerId);
-        indexRecord.offset = static_cast<int>(inFile.tellg()) - static_cast<int>(sizeof(Customers));  // Obtener el desplazamiento del registro actual
-        indexRecords.push_back(indexRecord);
-    }
-
-    sort(indexRecords.begin(), indexRecords.end(), compareIndexRecords);
-
-    for (const auto& record : indexRecords) {
-        outFile.write(reinterpret_cast<const char*>(&record), sizeof(customersIndexRecord));
-    }
-
-
-    inFile.close();
-    outFile.close();
-}
-void createOrdersIndex() {
-    ifstream ordersFile("orders.dat", ios::binary);
-    ofstream indexFile("orders.idx", ios::binary);
-
-    if (!ordersFile) {
-        cerr << "Error al abrir el archivo de orders" << endl;
-        return;
-    }
-
-    if (!indexFile) {
-        cerr << "Error al crear el archivo de índices" << endl;
-        return;
-    }
-
-    vector<orderIndexEntry> indexEntries;
-
-    Orders order;
-    long offset = 0;
-    while (ordersFile.read(reinterpret_cast<char*>(&order), sizeof(Orders))) {
-        orderIndexEntry entry;
-        strcpy(entry.orderId, order.orderId);
-        entry.offset = offset;
-        indexEntries.push_back(entry);
-        offset += sizeof(Orders);
-    }
-
-    sort(indexEntries.begin(), indexEntries.end(), compareIndexEntries);
-
-    for (const orderIndexEntry& entry : indexEntries) {
-        indexFile.write(reinterpret_cast<const char*>(&entry), sizeof(orderIndexEntry));
-    }
-
-    ordersFile.close();
-    indexFile.close();
-}
-void createProductsIndex() {
-    ifstream productsFile("products.dat", ios::binary);
-    ofstream indexFile("products.idx", ios::binary);
-
-    if (!productsFile) {
-        cerr << "Error: No se pudo abrir el archivo de productos." << endl;
-        return;
-    }
-
-    if (!indexFile) {
-        cerr << "Error: No se pudo crear el archivo de índices." << endl;
-        return;
-    }
-
-    Products product;
-    productsIndexEntry entry;
-    vector<productsIndexEntry> indexEntries;
-
-    while (productsFile.read(reinterpret_cast<char*>(&product), sizeof(Products))) {
-        strcpy(entry.key, product.productId);
-        entry.offset = static_cast<std::streamoff>(productsFile.tellg()) - static_cast<std::streamoff>(sizeof(Products));
-        indexEntries.push_back(entry);
-    }
-
-    sort(indexEntries.begin(), indexEntries.end(), [](const productsIndexEntry& entry1, const productsIndexEntry& entry2) {
-        return strcmp(entry1.key, entry2.key) < 0;
-        });
-
-    for (const productsIndexEntry& entry : indexEntries) {
-        indexFile.write(reinterpret_cast<const char*>(&entry), sizeof(productsIndexEntry));
-    }
-
-    productsFile.close();
-    indexFile.close();
-}
-
-
-void searchOrder(const string& orderId) {
-    ifstream ordersIndexFile("orders.idx", ios::binary);
-    ifstream ordersFile("orders.dat", ios::binary);
-    ifstream customersIndexFile("customers.idx", ios::binary);
-    ifstream customersFile("customers.dat", ios::binary);
-    ifstream detailsFile("details.dat", ios::binary);
-    ifstream productsIndexFile("products.idx", ios::binary);
-    ifstream productsFile("products.dat", ios::binary);
-
-    if (!ordersIndexFile || !ordersFile || !customersIndexFile || !customersFile || !detailsFile || !productsIndexFile || !productsFile) {
-        cerr << "Error: No se pudieron abrir todos los archivos necesarios." << endl;
-        return;
-    }
-
-    orderIndexEntry orderIndexEntry;
-    bool orderFound = false;
-
-    while (ordersIndexFile.read(reinterpret_cast<char*>(&orderIndexEntry), sizeof(orderIndexEntry))) {
-        if (strcmp(orderIndexEntry.orderId, orderId.c_str()) == 0) {
-            orderFound = true;
-            break;
-        }
-    }
-
-    if (!orderFound) {
-        cout << "Orden no encontrada." << endl;
-        return;
-    }
-
-    ordersFile.seekg(orderIndexEntry.offset);
-    Orders order;
-    ordersFile.read(reinterpret_cast<char*>(&order), sizeof(Orders));
-
-    cout << "ORDER" << endl;
-    cout << "    ID:          " << order.orderId << endl;
-    cout << "    Date:        " << order.orderDate << endl;
-    cout << "    Shipped:     " << order.shipDate << endl;
-    cout << "    Ship Mode:   " << order.shipMode << endl;
-
-    customersIndexRecord customerIndexRecord;
-    customersIndexFile.seekg(0, ios::end);
-    int indexFileSize = customersIndexFile.tellg();
-    customersIndexFile.seekg(0, ios::beg);
-
-    bool customerFound = false;
-
-    while (customersIndexFile.tellg() < indexFileSize) {
-        customersIndexFile.read(reinterpret_cast<char*>(&customerIndexRecord), sizeof(customerIndexRecord));
-
-        if (strcmp(customerIndexRecord.customerId, order.customerId) == 0) {
-            customerFound = true;
-            break;
-        }
-    }
-
-    if (!customerFound) {
-        cout << "Cliente no encontrado." << endl;
-        return;
-    }
-
-    customersFile.seekg(customerIndexRecord.offset);
-    Customers customer;
-    customersFile.read(reinterpret_cast<char*>(&customer), sizeof(Customers));
-
-    cout << "CUSTOMER" << endl;
-    cout << "    ID:          " << customer.customerId << endl;
-    cout << "    Name:        " << customer.customerName << endl;
-    cout << "    Segment:     " << customer.segment << endl;
-    cout << "    Country:     " << customer.country << endl;
-    cout << "    City:        " << customer.city << endl;
-    cout << "    State:       " << customer.state << endl;
-    cout << "    Postal Code: " << customer.postalCode << endl;
-    cout << "    Region:      " << customer.region << endl;
-
-    vector<Details> orderDetails;
-    Details detail;
-
-    while (detailsFile.read(reinterpret_cast<char*>(&detail), sizeof(Details))) {
-        if (strcmp(detail.orderId, orderId.c_str()) == 0) {
-            orderDetails.push_back(detail);
-        }
-    }
-
-    cout << "ITEMS" << endl;
-    int totalItems = 0;
-    for (const Details& orderDetail : orderDetails) {
-        productsIndexEntry productIndexEntry;
-        productsIndexFile.seekg(0, ios::end);
-        int productIndexFileSize = productsIndexFile.tellg();
-        productsIndexFile.seekg(0, ios::beg);
-
-        bool productFound = false;
-
-        while (productsIndexFile.tellg() < productIndexFileSize) {
-            productsIndexFile.read(reinterpret_cast<char*>(&productIndexEntry), sizeof(productIndexEntry));
-
-            if (strcmp(productIndexEntry.key, orderDetail.productId) == 0) {
-                productFound = true;
-                break;
             }
         }
 
-        if (!productFound) {
-            cout << "Producto no encontrado para el detalle de orden: " << orderDetail.productId << endl;
-            continue;
+        //Create the index files with its byte offset
+        int ordersLength, productsLength, costumersLength;
+        costumersLength = getRecordLength("customers.dat");
+        ordersLength = getRecordLength("orders.dat");
+        productsLength = getRecordLength("products.dat");
+        writeIndexFile(costumersLength, "customers.dat", 0, numberOfRecords);
+        writeIndexFile(ordersLength, "orders.dat", 1, numberOfRecords);
+        writeIndexFile(productsLength, "products.dat", 2, numberOfRecords);
+        
+    } else if (fileName == "-search") {
+        string orderId;
+        bool visited = false, found = false, itemVisited = false;
+        int index = 1, quantity = 1;
+        double total = 0;
+        string line, id;
+        vector<Index*> indexOrders = getIndexList(0);
+        vector<Index*> indexCostumers = getIndexList(1);
+        vector<Index*> indexProducts = getIndexList(2);
+        if (flag.substr(0, 6) == "order=") {
+            orderId = flag.substr(6, flag.length());
+            for (int i = 0; i < indexOrders.size(); i++) {
+                if (indexOrders[i]->getId() == orderId) {
+                    index = i;
+                    int offsetOrders = indexOrders[i]->getOffset();
+                    int offsetCustomers = indexCostumers[i]->getOffset();
+                    int offsetProducts = indexProducts[i]->getOffset();
+                    if (visited == false) {
+                        visited = true;
+                        getData(0, offsetOrders, true, i);
+                        getData(1, offsetCustomers, true, i);
+                        
+                    }
+                    if (itemVisited == true) {
+                        quantity++;
+                    }
+                    if (itemVisited == false) {
+                        itemVisited = true;
+                        total = total + getData(2, offsetProducts, false, i);
+                    } else {
+                        total = total + getData(2, offsetProducts, true, i);
+                    }
+                    found = true;
+                }
+            }
+            cout << "\nORDER SUMMARY" << endl;
+            cout << "    Items: " << quantity << endl;
+            cout << "    Total: " << total << endl;
+            if (found == false) {
+                cout << "No se encontro la orden." << endl;
+            }
+        } else if (flag.substr(0, 9) == "customer=") {
+            orderId = flag.substr(9, flag.length());
+            for (int i = 0; i < indexOrders.size(); i++) {
+                if (indexCostumers[i]->getId() == orderId) {
+                    index = i;
+                    int offsetCustomers = indexCostumers[i]->getOffset();
+                    if (visited == false) {
+                        visited = true;
+                        getData(1, offsetCustomers, true, i);
+                    }
+                    found = true;
+                }
+            }
+            if (found == false) {
+                cout << "No se encontro el cliente." << endl;
+            }
+        } else if (flag.substr(0, 8) == "product=") {
+            orderId = flag.substr(8, flag.length());
+            for (int i = 0; i < indexOrders.size(); i++) {
+                if (indexProducts[i]->getId() == orderId) {
+                    index = i;
+                    int offsetProducts = indexProducts[i]->getOffset();
+                    getData(3, offsetProducts, true, i);
+                    found = true;
+                }
+            }
+            if (found == false) {
+                cout << "No se pudo encontrar el producto." << endl;
+            }
+        } else {
+            cerr << "Error! Accion erronea" << endl;
         }
-
-        productsFile.seekg(productIndexEntry.offset);
-        Products product;
-        productsFile.read(reinterpret_cast<char*>(&product), sizeof(Products));
-
-        cout << "    " << product.productId << " " << product.category << " " << product.subcategory << " " << product.productName << " " << orderDetail.sales << " " << orderDetail.quantity << " " << orderDetail.discount << " " << orderDetail.profit << endl;
-        totalItems++;
+        
+    } else {
+        cerr << "Error: Bandera incorrecta.\nDebe ser -normalize o -" << endl;
     }
-
-
-    double totalAmount = 0.0;
-
-    for (const Details& orderDetail : orderDetails) {
-        totalAmount += (orderDetail.sales * orderDetail.quantity);
-    }
-
-    cout << "ORDER SUMMARY" << endl;
-    cout << "    Items: " << totalItems << endl;
-    cout << "    Total: " << totalAmount << endl;
-
-    ordersIndexFile.close();
-    ordersFile.close();
-    customersIndexFile.close();
-    customersFile.close();
-    detailsFile.close();
-    productsIndexFile.close();
-    productsFile.close();
+    return 0;
 }
-void searchCustomer(const string& customerId) {
-    ifstream customersIndexFile("customers.idx", ios::binary);
-    ifstream customersFile("customers.dat", ios::binary);
-
-    if (!customersIndexFile || !customersFile) {
-        cerr << "Error: No se pudieron abrir todos los archivos necesarios." << endl;
-        return;
-    }
-
-    customersIndexRecord customerIndexRecord;
-    bool customerFound = false;
-
-    while (customersIndexFile.read(reinterpret_cast<char*>(&customerIndexRecord), sizeof(customerIndexRecord))) {
-        if (strcmp(customerIndexRecord.customerId, customerId.c_str()) == 0) {
-            customerFound = true;
-            break;
-        }
-    }
-
-    if (!customerFound) {
-        cout << "Cliente no encontrado." << endl;
-        return;
-    }
-
-    customersFile.seekg(customerIndexRecord.offset);
-    Customers customer;
-    customersFile.read(reinterpret_cast<char*>(&customer), sizeof(Customers));
-
-    cout << "CUSTOMER" << endl;
-    cout << "    ID:          " << customer.customerId << endl;
-    cout << "    Name:        " << customer.customerName << endl;
-    cout << "    Segment:     " << customer.segment << endl;
-    cout << "    Country:     " << customer.country << endl;
-    cout << "    City:        " << customer.city << endl;
-    cout << "    State:       " << customer.state << endl;
-    cout << "    Postal Code: " << customer.postalCode << endl;
-    cout << "    Region:      " << customer.region << endl;
-
-    customersIndexFile.close();
-    customersFile.close();
-}
-void searchProduct(const string& productId) {
-    ifstream productsIndexFile("products.idx", ios::binary);
-    ifstream productsFile("products.dat", ios::binary);
-
-    if (!productsIndexFile || !productsFile) {
-        cerr << "Error: No se pudieron abrir todos los archivos necesarios." << endl;
-        return;
-    }
-
-    productsIndexEntry productIndexEntry;
-    bool productFound = false;
-
-    while (productsIndexFile.read(reinterpret_cast<char*>(&productIndexEntry), sizeof(productIndexEntry))) {
-        if (strcmp(productIndexEntry.key, productId.c_str()) == 0) {
-            productFound = true;
-            break;
-        }
-    }
-
-    if (!productFound) {
-        cout << "Producto no encontrado." << endl;
-        return;
-    }
-
-    productsFile.seekg(productIndexEntry.offset);
-    Products product;
-    productsFile.read(reinterpret_cast<char*>(&product), sizeof(Products));
-
-    cout << "PRODUCT" << endl;
-    cout << "    ID:          " << product.productId << endl;
-    cout << "    Category:    " << product.category << endl;
-    cout << "    Subcategory: " << product.subcategory << endl;
-    cout << "    Name:        " << product.productName << endl;
-
-    productsIndexFile.close();
-    productsFile.close();
-}
-
-void splitData(const string& texto, string& antesDelIgual, string& despuesDelIgual) {
-    size_t posicionIgual = texto.find("=");
-
-    if (posicionIgual != std::string::npos) {
-        antesDelIgual = texto.substr(0, posicionIgual);
-        despuesDelIgual = texto.substr(posicionIgual + 1);
-    }
-    else {
-        antesDelIgual = "";
-        despuesDelIgual = "";
-    }
-}
-int main(int argc, char** argv) {
-    if (argc == 3 && string(argv[2]) == "-normalize") {
-        createCustomersFile(string(argv[1]));
-        createDetailsFile(string(argv[1]));
-        createOrdersFile(string(argv[1]));
-        createProductsFile(string(argv[1]));
-    }
-    else if (argc == 3 && string(argv[2]) == "-create-indices") {
-        createCustomersIndex();
-        createOrdersIndex();
-        createProductsIndex();
-    }
-    else if (argc == 3 && string(argv[1]) == "-search") {
-        string beforeEqual, afterEqual;
-        splitData(argv[2], beforeEqual, afterEqual);
-        if (beforeEqual == "order") {
-            searchOrder(afterEqual);
-        }
-        else if (beforeEqual == "customer") {
-            searchCustomer(afterEqual);
-        }
-        else if (beforeEqual == "product") {
-            searchProduct(afterEqual);
-        }
-    }
-    else {
-        cerr << "Argumentos invalidos" << endl;
-    }
-}
+//g++
+//./a.out ./data/superstore.csv -normalize
+//./a.out -search order=CA-2015-149587
